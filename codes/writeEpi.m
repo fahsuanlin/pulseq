@@ -1,6 +1,7 @@
 % this is a demo low-performance EPI sequence;
 % it doesn't use ramp-samping and is only good for educational purposes.
 %
+close all; clear all;
 seq=mr.Sequence();              % Create a new sequence object
 fov=220e-3; Nx=64; Ny=64;       % Define FOV and resolution
 thickness=3e-3;                 % slice thinckness
