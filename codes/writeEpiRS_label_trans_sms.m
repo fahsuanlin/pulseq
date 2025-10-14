@@ -16,7 +16,7 @@ seq=mr.Sequence(sys);      % Create a new sequence object
 fov=220e-3; Nx=64; Ny=Nx;  % Define FOV and resolution
 thickness=3e-3;            % slice thinckness in mm
 sliceGap=1.5e-3;             % slice gap im mm
-Nslices=48;
+Nslices=2;
 Nrep = 1 ;
 TR = 2000e-3 ;
 
@@ -38,21 +38,31 @@ rf_fs = mr.makeGaussPulse(110*pi/180,'system',sys,'Duration',8e-3,'dwell',10e-6,
 rf_fs.phaseOffset=-2*pi*rf_fs.freqOffset*mr.calcRfCenter(rf_fs); % compensate for the frequency-offset induced phase    
 gz_fs = mr.makeTrapezoid('z',sys,'delay',mr.calcDuration(rf_fs),'Area',0.1/1e-4); % spoil up to 0.1mm
 % Create 90 degree slice selection pulse and gradient
-[rf, gz, gzReph] = mr.makeSincPulse(pi/2,'system',sys,'Duration',2e-3,...
-    'SliceThickness',thickness,'apodization',0.42,'timeBwProduct',4,'use','excitation');
-
-BW = 4/(3e-3); % RF bandwidth, which is equal to RF timebandwidthproduct/RFdur.
 RFdur = 2e-3;
+timeBwProduct=4;
+[rf, gz, gzReph] = mr.makeSincPulse(pi/2,'system',sys,'Duration',RFdur,...
+    'SliceThickness',thickness,'apodization',0.42,'timeBwProduct',timeBwProduct,'use','excitation');
+
+BW = timeBwProduct/(RFdur); % RF bandwidth, which is equal to RF timebandwidthproduct/RFdur.
 SliceLeakRatio = 1; % meaning adjacent 2 slices have no gap and no overlapping.
 MBfac = 2; % 1: single slice; 2: multi(2) slices.
-Nslices = Nslices/MBfac;
+MBFOVshift=2; %shift in FOV, 0 means no shift, 2 means 1/2 FOV shift, 3 means 1/3 FOV shift, ...
+
 % >>>>>>>>>>> Phase modulation for multi-band. >>>>>>>>>>>>>>>>
-if MBfac == 2
+if MBfac >= 2
+        Nslices = Nslices/MBfac;
         mbFreqSept = SliceLeakRatio * BW * Nslices; % mbFreqSept = SliceLeakRatio * BW * Nslices;
         N = round(RFdur / sys.rfRasterTime); t = (1 : N) * sys.rfRasterTime; tt = t - (RFdur * 0.5);
-        MB1 = exp(1i * 2 * pi * (0.0) * mbFreqSept * tt);
-        MB2 = exp(1i * 2 * pi * (1.0) * mbFreqSept * tt);
-        rf.signal(1 : N) = squeeze(rf.signal(1 : N)) .* (MB1(:) + MB2(:));
+%         MB1 = exp(1i * 2 * pi * (0.0) * mbFreqSept * tt);
+%         MB2 = exp(1i * 2 * pi * (1.0) * mbFreqSept * tt);
+%         rf.signal(1 : N) = squeeze(rf.signal(1 : N)) .* (MB1(:) + MB2(:));
+        rf_signal0=rf.signal(1 : N);
+        tmp=zeros(N,1);
+        for mb_idx=1:MBfac
+            MB = exp(1i * 2 * pi * (mb_idx-1) * mbFreqSept * tt);
+            tmp = tmp+ rf_signal0(:) .* MB(:);
+        end;
+        rf.signal(1 : N)=tmp;
 end
 
 
@@ -133,7 +143,6 @@ gyPre = mr.makeTrapezoid('y',sys,'Area',Ny_pre*deltak);
 gyPre = mr.makeTrapezoid('y',sys,'Area',gyPre.area,'Duration',mr.calcDuration(gxPre,gyPre,gzReph));
 gyPre.amplitude=gyPre.amplitude*pe_enable;
 
-MBFOVshift=2; %shift in FOV, 0 means no shift, 2 means 1/2 FOV shift, 3 means 1/3 FOV shift, ...
 if(MBFOVshift)
     %CAIPI
     deltak_sms=1/(Nslices*thickness)/MBFOVshift;

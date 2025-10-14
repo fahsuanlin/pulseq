@@ -20,6 +20,8 @@ Nslices=48;
 Nrep = 1 ;
 TR = 2000e-3 ;
 
+
+
 pe_enable=1;               % a flag to quickly disable phase encoding (1/0) as needed for the delay calibration
 ro_os=2;                   % oversampling factor (in contrast to the product sequence we don't really need it)
 readoutTime = 580e-6 ; % default value
@@ -153,7 +155,7 @@ ROpolarity = sign(gx.amplitude) ;
 % seq.addBlock(mr.makeLabel('SET','REP', 0)) ;
 %for r=1:Nrep
     seq.addBlock(mr.makeLabel('SET', 'SLC', 0) ) ;
-    for s=1:Nslices/2
+    for s=1:Nslices/2 %SER
         %slice 1
         seq.addBlock(rf_fs, gz_fs) ;
         rf.freqOffset=gz.amplitude*slicePositions(s);
@@ -165,7 +167,9 @@ ROpolarity = sign(gx.amplitude) ;
         %slice 2
         rf.freqOffset=gz.amplitude*slicePositions(s+Nslices/2);
         rf.phaseOffset=-2*pi*rf.freqOffset*mr.calcRfCenter(rf); % compensate for the slice-offset induced phase
-        gxPre2 = mr.scaleGrad(gxPre2, -1) ; % SER readout prephase
+        if Nnav>0
+            gxPre2 = mr.scaleGrad(gxPre2, -1) ; % SER readout prephase
+        end;
         seq.addBlock(gxPre2,gzReph2);
         seq.addBlock(rf,gz);
 
