@@ -2,7 +2,7 @@ close all; clear all;
 % Define FOV and resolution
 fov=256e-3; Nx=64; Ny=64; 
 thickness=3e-3;
-Nslices=10;
+Nslices=48;
 
 % Set system limits
 lims = mr.opts('MaxGrad', 32, 'GradUnit', 'mT/m',...

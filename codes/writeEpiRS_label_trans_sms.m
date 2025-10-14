@@ -16,7 +16,7 @@ seq=mr.Sequence(sys);      % Create a new sequence object
 fov=220e-3; Nx=64; Ny=Nx;  % Define FOV and resolution
 thickness=3e-3;            % slice thinckness in mm
 sliceGap=1.5e-3;             % slice gap im mm
-Nslices=2;
+Nslices=48;
 Nrep = 1 ;
 TR = 2000e-3 ;
 

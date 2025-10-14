@@ -3,7 +3,7 @@
 % gradients combined with ramp-samping
 % strongly leaned towards the Siemens EPI_BOLD sequence 
 % especially in terms of flags and labes to enable ICE reconstruction
-%close all; clear all;
+close all; clear all;
 
 % Set system limits
 sys = mr.opts('MaxGrad',32,'GradUnit','mT/m',...
@@ -16,7 +16,7 @@ seq=mr.Sequence(sys);      % Create a new sequence object
 fov=220e-3; Nx=64; Ny=Nx;  % Define FOV and resolution
 thickness=3e-3;            % slice thinckness in mm
 sliceGap=1.5e-3;             % slice gap im mm
-Nslices=2;
+Nslices=48;
 Nrep = 1 ;
 TR = 2000e-3 ;
 
@@ -60,13 +60,11 @@ gy = mr.makeTrapezoid('y',sys,'Area',-deltak,'Duration',blip_dur); % we use nega
 % we do a two-step calculation: we first increase the area assuming maximum
 % slewrate and then scale down the amlitude to fix the area 
 extra_area=blip_dur/2*blip_dur/2*sys.maxSlew; % check unit!;
-gx = mr.makeTrapezoid('x',sys,'Area',kWidth+extra_area,'duration',readoutTime+blip_dur);
+gx = mr.makeTrapezoid('x',sys,'Area',(kWidth+extra_area)*2,'duration',readoutTime+blip_dur); %SER
 % actual sampled area = whole area - rampup deadarea - rampdown deadarea
 actual_area=gx.area-gx.amplitude/gx.riseTime*blip_dur/2*blip_dur/2/2-gx.amplitude/gx.fallTime*blip_dur/2*blip_dur/2/2;
 gx.amplitude=gx.amplitude/actual_area*kWidth; % rescale amplitude to make sampled area = kWidth
 gx.area = gx.amplitude*(gx.flatTime + gx.riseTime/2 + gx.fallTime/2); % udpate parameters relative to amplitude
-
-gx.area = gx.area*2; %SER
 
 gx.flatArea = gx.amplitude*gx.flatTime;
 assert(gx.amplitude<=sys.maxGrad);
@@ -163,12 +161,13 @@ ROpolarity = sign(gx.amplitude) ;
         seq.addBlock(rf,gz,trig);
         seq.addBlock(gzReph);
 
-%         
-%         %slice 2
-%         rf.freqOffset=gz.amplitude*slicePositions(s+Nslices/2);
-%         rf.phaseOffset=-2*pi*rf.freqOffset*mr.calcRfCenter(rf); % compensate for the slice-offset induced phase
-         seq.addBlock(gxPre2,gzReph2);
-         seq.addBlock(rf,gz);
+         
+        %slice 2
+        rf.freqOffset=gz.amplitude*slicePositions(s+Nslices/2);
+        rf.phaseOffset=-2*pi*rf.freqOffset*mr.calcRfCenter(rf); % compensate for the slice-offset induced phase
+        gxPre2 = mr.scaleGrad(gxPre2, -1) ; % SER readout prephase
+        seq.addBlock(gxPre2,gzReph2);
+        seq.addBlock(rf,gz);
 
 
         if Nnav>0
