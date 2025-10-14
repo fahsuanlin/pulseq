@@ -1,0 +1,180 @@
+close all; clear all;
+% Define FOV and resolution
+fov=256e-3; Nx=64; Ny=64; 
+thickness=3e-3;
+Nslices=10;
+
+% Set system limits
+lims = mr.opts('MaxGrad', 32, 'GradUnit', 'mT/m',...
+    'MaxSlew', 130, 'SlewUnit', 'T/m/s', 'rfRingdownTime', 20e-6, ...
+    'rfDeadTime', 100e-6, 'adcDeadTime', 20e-6);  
+% Create a new sequence object
+seq=mr.Sequence(lims);
+
+% Create 90 degree slice selection pulse and gradient
+[rf, gz] = mr.makeSincPulse(pi/2,lims,'Duration',3e-3,...
+    'SliceThickness',thickness,'apodization',0.5,'timeBwProduct',4,...
+    'use','excitation');
+
+BW = 4/(3e-3); % RF bandwidth, which is equal to RF timebandwidthproduct/RFdur.
+RFdur = 3e-3;
+SliceLeakRatio = 1; % meaning adjacent 2 slices have no gap and no overlapping.
+MBfac = 2; % 1: single slice; 2: multi(2) slices.
+Nslices = Nslices/MBfac;
+% >>>>>>>>>>> Phase modulation for multi-band. >>>>>>>>>>>>>>>>
+if MBfac == 2
+        mbFreqSept = SliceLeakRatio * BW * Nslices; % mbFreqSept = SliceLeakRatio * BW * Nslices;
+        N = round(RFdur / lims.rfRasterTime); t = (1 : N) * lims.rfRasterTime; tt = t - (RFdur * 0.5);
+        MB1 = exp(1i * 2 * pi * (0.0) * mbFreqSept * tt);
+        MB2 = exp(1i * 2 * pi * (1.0) * mbFreqSept * tt);
+        rf.signal(1 : N) = squeeze(rf.signal(1 : N)) .* (MB1(:) + MB2(:));
+end
+
+
+% Define other gradients and ADC events
+deltak=1/fov;
+kWidth = Nx*deltak;
+readoutTime = 3.2e-4;
+gx = mr.makeTrapezoid('x',lims,'FlatArea',kWidth,'FlatTime',readoutTime);
+adc = mr.makeAdc(Nx,lims,'Duration',gx.flatTime,'Delay',gx.riseTime);
+
+% Pre-phasing gradients
+preTime=8e-4;
+%gxPre = mr.makeTrapezoid('x',lims,'Area',-gx.area/2-deltak/2,'Duration',preTime);
+gzReph = mr.makeTrapezoid('z',lims,'Area',-gz.area/2,'Duration',preTime);
+%gyPre = mr.makeTrapezoid('y',lims,'Area',-Ny/2*deltak,'Duration',preTime);
+% we need no minus for in-plane prephasers because of the spin-echo (position reflection in k-space)
+gxPre = mr.makeTrapezoid('x',lims,'Area',gx.area/2-deltak/2,'Duration',preTime);
+gyPre = mr.makeTrapezoid('y',lims,'Area',Ny/2*deltak,'Duration',preTime);
+
+%navigator pre/re-phase gradients
+gx_nav_pre = mr.makeTrapezoid('x',lims,'Area',-gx.area/2+deltak/2,'Duration',preTime);
+gx_nav_re = mr.makeTrapezoid('x',lims,'Area',gx.area/2-deltak/2,'Duration',preTime);
+
+
+% Phase blip in shortest possible time
+dur = ceil(2*sqrt(deltak/lims.maxSlew)/10e-6)*10e-6;
+gy = mr.makeTrapezoid('y',lims,'Area',deltak,'Duration',dur);
+
+MBhalfFOVshift=1;
+if(MBhalfFOVshift)
+    %CAIPI
+    caipi_fov_shift=3; %shift in FOV, 2 means 1/2 FOV shift, 3 means 1/3 FOV shift, ...
+    deltak_sms=1/(Nslices*thickness)/caipi_fov_shift;
+    deltak_sms_max=1/(Nslices*thickness)/caipi_fov_shift*(caipi_fov_shift-1);
+    dur_sms = ceil(2*sqrt(deltak_sms_max/lims.maxSlew)/10e-6)*10e-6;
+    if(dur_sms>dur)
+        gy = mr.makeTrapezoid('y',lims,'Area',deltak,'Duration',dur_sms);
+        gz_sms = mr.makeTrapezoid('z',lims,'Area',deltak_sms,'Duration',dur_sms);
+        gz_sms_rep = mr.makeTrapezoid('z',lims,'Area',-deltak_sms_max,'Duration',dur_sms);
+    else
+        gz_sms = mr.makeTrapezoid('z',lims,'Area',deltak_sms,'Duration',dur);
+        gz_sms_rep = mr.makeTrapezoid('z',lims,'Area',-deltak_sms_max,'Duration',dur);
+    end;
+end;
+
+% Refocusing pulse with spoiling gradients
+rf180 = mr.makeBlockPulse(pi,lims,'Duration',500e-6,'use','refocusing');
+gzSpoil = mr.makeTrapezoid('z',lims,'Area',gz.area*2,'Duration',3*preTime);
+
+% Calculate delay time %% MZ: I thisk this is very wrong!
+TE=80e-3;
+durationToCenter = (Nx/2+0.5)*mr.calcDuration(gx) + Ny/2*mr.calcDuration(gy);
+rfCenterInclDelay=rf.delay + mr.calcRfCenter(rf);
+rf180centerInclDelay=rf180.delay + mr.calcRfCenter(rf180);
+delayTE1=TE/2 - mr.calcDuration(gz) + rfCenterInclDelay - preTime - mr.calcDuration(gzSpoil) - rf180centerInclDelay;
+delayTE2=TE/2 - mr.calcDuration(rf180) + rf180centerInclDelay - mr.calcDuration(gzSpoil) - durationToCenter;
+
+%navigator timing adjustment
+n_nav=2; %even number
+durationNav=mr.calcDuration(gx)*n_nav+mr.calcDuration(gx_nav_pre)+mr.calcDuration(gx_nav_re);
+delayTE2n=TE/2 - mr.calcDuration(rf180) + rf180centerInclDelay - mr.calcDuration(gzSpoil) - durationToCenter - durationNav-mr.calcDuration(gxPre);
+if(mod(n_nav,2)==0)
+    %when navigator is enabled....
+    gyPre.amplitude=-gyPre.amplitude;
+    gxPre.amplitude=-gxPre.amplitude;
+end;
+
+for s=1:Nslices
+    rf.freqOffset=gz.amplitude*thickness*(s-1-(Nslices-1)/2);
+    seq.addBlock(rf,gz);
+    %seq.addBlock(gxPre,gyPre,gzReph);
+    seq.addBlock(gzReph);
+    seq.addBlock(mr.makeDelay(delayTE1));
+    seq.addBlock(gzSpoil);
+    seq.addBlock(rf180);
+    seq.addBlock(gzSpoil);
+    %seq.addBlock(mr.makeDelay(delayTE2));
+    seq.addBlock(mr.makeDelay(delayTE2n));
+
+    %navigator
+    seq.addBlock(gx_nav_pre);               % navigator prephase
+    for i=1:n_nav
+        seq.addBlock(gx,adc);           % Read one line of k-space
+        gx.amplitude = -gx.amplitude;   % Reverse polarity of read gradient
+    end;
+    seq.addBlock(gx_nav_re);               % navigator rephase
+    seq.addBlock(gxPre,gyPre);              %readout prephase
+
+
+    caipi_counter=1;
+    for i=1:Ny
+        seq.addBlock(gx,adc);           % Read one line of k-space
+        if MBhalfFOVshift == 0
+            seq.addBlock(gy);               % Phase blip
+        else
+            if(mod(caipi_counter,caipi_fov_shift)==0)
+                seq.addBlock(gy,gz_sms_rep);           % Phase blip
+            else
+                seq.addBlock(gy,gz_sms);               % Phase blip
+            end;
+            caipi_counter=caipi_counter+1;
+        end;
+        gx.amplitude = -gx.amplitude;   % Reverse polarity of read gradient
+    end
+    if s==1
+        TR_1slice=seq.duration; % note the actual TR per slice
+    end
+% 
+% 
+%     for i=1:Ny
+%         seq.addBlock(gx,adc);           % Read one line of k-space
+%         seq.addBlock(gy);               % Phase blip
+%         gx.amplitude = -gx.amplitude;   % Reverse polarity of read gradient
+%     end
+%     seq.addBlock(mr.makeDelay(1e-4));
+end;
+
+%% check whether the timing of the sequence is correct
+[ok, error_report]=seq.checkTiming;
+
+if (ok)
+    fprintf('Timing check passed successfully\n');
+else
+    fprintf('Timing check failed! Error listing follows:\n');
+    fprintf([error_report{:}]);
+    fprintf('\n');
+end
+
+%% export and visualization
+seq.setDefinition('FOV', [fov fov thickness]);
+seq.setDefinition('Name', 'epise');
+seq.write('epi_senav_sms_caipi3.seq');   % Output sequence for scanner
+%seq.plot();             % Plot sequence waveforms
+seq.plot('stacked', 1);
+
+%% calculate trajectory 
+[ktraj_adc, t_adc, ktraj, t_ktraj, t_excitation, t_refocusing] = seq.calculateKspacePP();
+%[ktraj_adc, ktraj, t_excitation, t_refocusing, t_adc] = seq.calculateKspace();
+
+%% plot k-spaces
+figure; plot(t_ktraj, ktraj'); % plot the entire k-space trajectory
+hold; plot(t_adc,ktraj_adc(1,:),'.'); % and sampling points on the kx-axis
+
+figure; plot(ktraj(1,:),ktraj(2,:),'b',...
+             ktraj_adc(1,:),ktraj_adc(2,:),'r.'); % a 2D plot
+axis('equal'); % enforce aspect ratio for the correct trajectory display
+
+%% sanity checks
+TE_check=(t_refocusing(1)-t_excitation(1))*2;
+fprintf('intended TE=%.03f ms, actual spin echo TE=%.03fms\n', TE*1e3, TE_check*1e3); 
